@@ -1,0 +1,103 @@
+services:
+  app:
+    build: .
+    ports:
+      - '4000:4000'
+    environment:
+      - OTEL_COLLECTOR_HOST=alloy
+      - LOKI_HOST=loki
+    depends_on:
+      - alloy
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - '12345:12345'
+      - '4318:4318'
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=experimental
+      - /etc/alloy/config.alloy
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - '9090:9090'
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+
+  tempo:
+    image: grafana/tempo:2.7.0
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml
+    ports:
+      - '3200:3200'
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - '3100:3100'
+    command: -config.file=/etc/loki/local-config.yaml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - grafana-datasources:/etc/grafana/provisioning/datasources
+    configs:
+      - source: grafana-datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yaml
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+
+configs:
+  grafana-datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Tempo
+          type: tempo
+          access: proxy
+          url: http://tempo:3200
+          isDefault: true
+          version: 1
+          editable: false
+          uid: tempo
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki:3100
+          version: 1
+          editable: false
+          uid: loki
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          version: 1
+          editable: false
+          uid: prometheus
+
+volumes:
+  grafana-datasources:
